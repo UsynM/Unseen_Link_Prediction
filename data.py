@@ -9,8 +9,10 @@ random.seed(0)
 import numpy as np
 
 
-def dealpadding(lis_str, max):
-    list1 = np.zeros(max)
+def dealpadding(lis_str, max_len):
+    """将字符串列表padding到固定长度，处理引号问题"""
+    lis_str = str(lis_str).replace('"', '')  # 去掉双引号
+    list1 = np.zeros(max_len, dtype=np.int64)
     eval_lis = literal_eval(lis_str)
     lis_len = len(eval_lis)
     for i in range(0, lis_len):
@@ -25,19 +27,14 @@ class UserItemRatingDataset(Dataset):
                  ASnode1_info_traffic_tensor, ASnode1_info_ratio_tensor,
                  ASnode1_info_scope_tensor, ASnode1_policy_general_tensor,
                  ASnode1_policy_locations_tensor, ASnode1_policy_ratio_tensor,
-                 ASnode1_policy_contracts_tensor,ASnode1_appearIXP_tensor,
+                 ASnode1_policy_contracts_tensor, ASnode1_appearIXP_tensor,
                  ASnode1_appearFac_tensor,
                  ASnode2_info_type_tensor, ASnode2_AS_tier_tensor,
-                 ASnode2_info_traffic_tensor,ASnode2_info_ratio_tensor,
-                 ASnode2_info_scope_tensor,ASnode2_policy_general_tensor,
+                 ASnode2_info_traffic_tensor, ASnode2_info_ratio_tensor,
+                 ASnode2_info_scope_tensor, ASnode2_policy_general_tensor,
                  ASnode2_policy_locations_tensor, ASnode2_policy_ratio_tensor,
-                 ASnode2_policy_contracts_tensor,ASnode2_appearIXP_tensor,
+                 ASnode2_policy_contracts_tensor, ASnode2_appearIXP_tensor,
                  ASnode2_appearFac_tensor):
-        """
-        args:
-
-            target_tensor: torch.Tensor, the corresponding rating for <user, item> pair
-        """
         self.user_tensor = user_tensor
         self.item_tensor = item_tensor
         self.ASnode1_info_type_tensor = ASnode1_info_type_tensor
@@ -66,18 +63,18 @@ class UserItemRatingDataset(Dataset):
 
     def __getitem__(self, index):
         return self.user_tensor[index], self.item_tensor[index], \
-               self.ASnode1_info_type_tensor[index], self.ASnode1_AS_tier_tensor[index],\
-               self.ASnode1_info_traffic_tensor[index],self.ASnode1_info_ratio_tensor[index],\
-               self.ASnode1_info_scope_tensor[index],self.ASnode1_policy_general_tensor[index],\
-               self.ASnode1_policy_locations_tensor[index],self.ASnode1_policy_ratio_tensor[index],\
-               self.ASnode1_policy_contracts_tensor[index],self.ASnode1_appearIXP_tensor[index] ,\
-               self.ASnode1_appearFac_tensor[index],\
-               self.ASnode2_info_type_tensor[index],\
-               self.ASnode2_AS_tier_tensor[index], self.ASnode2_info_traffic_tensor[index],\
-               self.ASnode2_info_ratio_tensor[index], self.ASnode2_info_scope_tensor[index],\
-               self.ASnode2_policy_general_tensor[index],self.ASnode2_policy_locations_tensor[index],\
+               self.ASnode1_info_type_tensor[index], self.ASnode1_AS_tier_tensor[index], \
+               self.ASnode1_info_traffic_tensor[index], self.ASnode1_info_ratio_tensor[index], \
+               self.ASnode1_info_scope_tensor[index], self.ASnode1_policy_general_tensor[index], \
+               self.ASnode1_policy_locations_tensor[index], self.ASnode1_policy_ratio_tensor[index], \
+               self.ASnode1_policy_contracts_tensor[index], self.ASnode1_appearIXP_tensor[index], \
+               self.ASnode1_appearFac_tensor[index], \
+               self.ASnode2_info_type_tensor[index], \
+               self.ASnode2_AS_tier_tensor[index], self.ASnode2_info_traffic_tensor[index], \
+               self.ASnode2_info_ratio_tensor[index], self.ASnode2_info_scope_tensor[index], \
+               self.ASnode2_policy_general_tensor[index], self.ASnode2_policy_locations_tensor[index], \
                self.ASnode2_policy_ratio_tensor[index], self.ASnode2_policy_contracts_tensor[index], \
-               self.ASnode2_appearIXP_tensor[index], self.ASnode2_appearFac_tensor[index],self.target_tensor[index]
+               self.ASnode2_appearIXP_tensor[index], self.ASnode2_appearFac_tensor[index], self.target_tensor[index]
 
     def __len__(self):
         return self.user_tensor.size(0)
@@ -85,172 +82,106 @@ class UserItemRatingDataset(Dataset):
 
 class SampleGenerator(object):
     """Construct dataset for NCF"""
-    def __init__(self, train_ratings, valid_ratings):
-        """
-        args:
-            ratings: pd.DataFrame, which contains 4 columns = ['userId', 'itemId', 'rating', 'timestamp']
-        """
-
+    def __init__(self, train_ratings, valid_ratings, 
+                 ixp_pad_len=879, fac_pad_len=4111):
         self.train_ratings = train_ratings
         self.valid_ratings = valid_ratings
+        self.ixp_pad_len = ixp_pad_len
+        self.fac_pad_len = fac_pad_len
 
-
+    # ========== 懒加载 Train DataLoader（仅持有DataFrame引用，延迟到getitem才处理） ==========
     def instance_a_train_loader(self, batch_size):
-        """instance train loader for one training epoch"""
-        users, items, ratings,\
-        ASnode1_info_type, ASnode1_AS_tier,ASnode1_info_traffic,ASnode1_info_ratio,ASnode1_info_scope,\
-        ASnode1_policy_general,ASnode1_policy_locations,ASnode1_policy_ratio,ASnode1_policy_contracts, \
-        ASnode1_appearIXP, ASnode1_appearFac,ASnode2_info_type,ASnode2_AS_tier,ASnode2_info_traffic,ASnode2_info_ratio,ASnode2_info_scope,\
-        ASnode2_policy_general,ASnode2_policy_locations,ASnode2_policy_ratio,ASnode2_policy_contracts,ASnode2_appearIXP,ASnode2_appearFac= (
-            [], [], [],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[])
+        """每epoch调用但不再重新遍历DataFrame，DataLoader内部按需逐条getitem"""
+        ixp_pad = self.ixp_pad_len
+        fac_pad = self.fac_pad_len
 
+        class TrainDataset(torch.utils.data.Dataset):
+            def __init__(self, df):
+                self.df = df
 
+            def __len__(self):
+                return len(self.df)
 
-        for row in self.train_ratings.itertuples():
-            users.append(int(row.userId))
-            items.append(int(row.itemId))
-            ratings.append(float(row.rating))
-            ASnode1_info_type.append(int(row.ASnode1_info_type))
-            ASnode1_AS_tier.append(int(row.ASnode1_info_type))
-            ASnode1_info_traffic.append(int(row.ASnode1_info_traffic))
-            ASnode1_info_ratio.append(int(row.ASnode1_info_ratio))
-            ASnode1_info_scope.append(int(row.ASnode1_info_scope))
-            ASnode1_policy_general.append(int(row.ASnode1_policy_general))
-            ASnode1_policy_locations.append(int(row.ASnode1_policy_locations))
-            ASnode1_policy_ratio.append(int(row.ASnode1_policy_ratio))
-            ASnode1_policy_contracts.append(int(row.ASnode1_policy_contracts))
-            ASnode1_appearIXP.append(
-                dealpadding(row.ASnode1_appearIXP, 879))
-            ASnode1_appearFac.append(
-                dealpadding(row.ASnode1_appearFac, 4111))
+            def __getitem__(self, idx):
+                row = self.df.iloc[idx]
+                return (
+                    torch.tensor(int(row.userId), dtype=torch.long),
+                    torch.tensor(int(row.itemId), dtype=torch.long),
+                    # ASnode1 side info
+                    torch.tensor(int(row.ASnode1_info_type), dtype=torch.long),
+                    torch.tensor(int(row.ASnode1_AS_tier), dtype=torch.long),       # BUGFIX: 原来误写成 info_type
+                    torch.tensor(int(row.ASnode1_info_traffic), dtype=torch.long),
+                    torch.tensor(int(row.ASnode1_info_ratio), dtype=torch.long),
+                    torch.tensor(int(row.ASnode1_info_scope), dtype=torch.long),
+                    torch.tensor(int(row.ASnode1_policy_general), dtype=torch.long),
+                    torch.tensor(int(row.ASnode1_policy_locations), dtype=torch.long),
+                    torch.tensor(int(row.ASnode1_policy_ratio), dtype=torch.long),
+                    torch.tensor(int(row.ASnode1_policy_contracts), dtype=torch.long),
+                    torch.tensor(dealpadding(row.ASnode1_appearIXP, ixp_pad), dtype=torch.long),
+                    torch.tensor(dealpadding(row.ASnode1_appearFac, fac_pad), dtype=torch.long),
+                    # ASnode2 side info
+                    torch.tensor(int(row.ASnode2_info_type), dtype=torch.long),
+                    torch.tensor(int(row.ASnode2_AS_tier), dtype=torch.long),       # BUGFIX: 原来误写成 info_type
+                    torch.tensor(int(row.ASnode2_info_traffic), dtype=torch.long),
+                    torch.tensor(int(row.ASnode2_info_ratio), dtype=torch.long),
+                    torch.tensor(int(row.ASnode2_info_scope), dtype=torch.long),
+                    torch.tensor(int(row.ASnode2_policy_general), dtype=torch.long),
+                    torch.tensor(int(row.ASnode2_policy_locations), dtype=torch.long),
+                    torch.tensor(int(row.ASnode2_policy_ratio), dtype=torch.long),
+                    torch.tensor(int(row.ASnode2_policy_contracts), dtype=torch.long),
+                    torch.tensor(dealpadding(row.ASnode2_appearIXP, ixp_pad), dtype=torch.long),
+                    torch.tensor(dealpadding(row.ASnode2_appearFac, fac_pad), dtype=torch.long),
+                    torch.tensor(float(row.rating), dtype=torch.float32),
+                )
 
+        dataset = TrainDataset(self.train_ratings)
+        return DataLoader(dataset, batch_size=batch_size, shuffle=True,
+                          pin_memory=True, num_workers=0)
 
-
-            ASnode2_info_type.append(int(row.ASnode2_info_type))
-            ASnode2_AS_tier.append(int(row.ASnode2_info_type))
-            ASnode2_info_traffic.append(int(row.ASnode2_info_traffic))
-            ASnode2_info_ratio.append(int(row.ASnode2_info_ratio))
-            ASnode2_info_scope.append(int(row.ASnode2_info_scope))
-            ASnode2_policy_general.append(int(row.ASnode2_policy_general))
-            ASnode2_policy_locations.append(int(row.ASnode2_policy_locations))
-            ASnode2_policy_ratio.append(int(row.ASnode2_policy_ratio))
-            ASnode2_policy_contracts.append(int(row.ASnode2_policy_contracts))
-            ASnode2_appearIXP.append(
-                dealpadding(row.ASnode2_appearIXP, 879))
-            ASnode2_appearFac.append(
-                dealpadding(row.ASnode2_appearFac, 4111))
-
-            # construct data for model
-        dataset = UserItemRatingDataset(
-            user_tensor=torch.ShortTensor(users),
-            item_tensor=torch.ShortTensor(items),
-            target_tensor=torch.FloatTensor(ratings),
-            ASnode1_info_type_tensor=torch.ShortTensor(ASnode1_info_type),
-            ASnode1_AS_tier_tensor=torch.ShortTensor(ASnode1_AS_tier),
-            ASnode1_info_traffic_tensor=torch.ShortTensor(ASnode1_info_traffic),
-            ASnode1_info_ratio_tensor=torch.ShortTensor(ASnode1_info_ratio),
-            ASnode1_info_scope_tensor=torch.ShortTensor(ASnode1_info_scope),
-            ASnode1_policy_general_tensor=torch.ShortTensor(
-                ASnode1_policy_general),
-            ASnode1_policy_locations_tensor=torch.ShortTensor(
-                ASnode1_policy_locations),
-            ASnode1_policy_ratio_tensor=torch.ShortTensor(ASnode1_policy_ratio),
-            ASnode1_policy_contracts_tensor=torch.ShortTensor(
-                ASnode1_policy_contracts),
-            ASnode1_appearIXP_tensor=torch.ShortTensor(ASnode1_appearIXP),
-            ASnode1_appearFac_tensor=torch.ShortTensor(ASnode1_appearFac),
-            ASnode2_info_type_tensor=torch.ShortTensor(ASnode2_info_type),
-            ASnode2_AS_tier_tensor=torch.ShortTensor(ASnode2_AS_tier),
-            ASnode2_info_traffic_tensor=torch.ShortTensor(ASnode2_info_traffic),
-            ASnode2_info_ratio_tensor=torch.ShortTensor(ASnode2_info_ratio),
-            ASnode2_info_scope_tensor=torch.ShortTensor(ASnode2_info_scope),
-            ASnode2_policy_general_tensor=torch.ShortTensor(
-                ASnode2_policy_general),
-            ASnode2_policy_locations_tensor=torch.ShortTensor(
-                ASnode2_policy_locations),
-            ASnode2_policy_ratio_tensor=torch.ShortTensor(ASnode2_policy_ratio),
-            ASnode2_policy_contracts_tensor=torch.ShortTensor(
-                ASnode2_policy_contracts),
-            ASnode2_appearIXP_tensor = torch.ShortTensor(ASnode2_appearIXP),
-            ASnode2_appearFac_tensor = torch.ShortTensor(ASnode2_appearFac))
-        return DataLoader(dataset, batch_size=batch_size, shuffle=True)
-
-    ##得到验证集,现在的验证集要变成回归。
+    # ========== 批量 Validation DataLoader（替代原来一次性返回大tensor的 evaluate_data） ==========
     @property
     def evaluate_data(self):
-        """create evaluate data"""
-        test_users, test_items, test_ratings, ASnode1_info_type, \
-        ASnode1_AS_tier, \
-        ASnode1_info_traffic, ASnode1_info_ratio, ASnode1_info_scope, \
-        ASnode1_policy_general, ASnode1_policy_locations, \
-        ASnode1_policy_ratio, ASnode1_policy_contracts, ASnode1_appearIXP, ASnode1_appearFac,\
-        ASnode2_info_type, ASnode2_AS_tier,  \
-        ASnode2_info_traffic, ASnode2_info_ratio, ASnode2_info_scope, \
-        ASnode2_policy_general, ASnode2_policy_locations, \
-        ASnode2_policy_ratio, ASnode2_policy_contracts,ASnode2_appearIXP, ASnode2_appearFac  = (
-           [],[],[],[], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], []
-        )
+        """返回 DataLoader，支持逐batch评估，避免显存OOM"""
+        ixp_pad = self.ixp_pad_len
+        fac_pad = self.fac_pad_len
 
+        class ValDataset(torch.utils.data.Dataset):
+            def __init__(self, df):
+                self.df = df
 
+            def __len__(self):
+                return len(self.df)
 
-        for row in self.valid_ratings.itertuples():
-            test_users.append(int(row.userId))
-            test_items.append(int(row.itemId))
-            test_ratings.append(float(row.rating))
-            ASnode1_info_type.append(int(row.ASnode1_info_type))
-            ASnode1_AS_tier.append(int(row.ASnode1_info_type))
-            ASnode1_info_traffic.append(int(row.ASnode1_info_traffic))
-            ASnode1_info_ratio.append(int(row.ASnode1_info_ratio))
-            ASnode1_info_scope.append(int(row.ASnode1_info_scope))
-            ASnode1_policy_general.append(int(row.ASnode1_policy_general))
-            ASnode1_policy_locations.append(int(row.ASnode1_policy_locations))
-            ASnode1_policy_ratio.append(int(row.ASnode1_policy_ratio))
-            ASnode1_policy_contracts.append(int(row.ASnode1_policy_contracts))
-            ASnode1_appearIXP.append(
-                dealpadding(row.ASnode1_appearIXP, 879))
-            ASnode1_appearFac.append(
-                dealpadding(row.ASnode1_appearFac, 4111))
+            def __getitem__(self, idx):
+                row = self.df.iloc[idx]
+                return (
+                    torch.tensor(int(row.userId), dtype=torch.long),
+                    torch.tensor(int(row.itemId), dtype=torch.long),
+                    torch.tensor(int(row.ASnode1_info_type), dtype=torch.long),
+                    torch.tensor(int(row.ASnode1_AS_tier), dtype=torch.long),       # BUGFIX
+                    torch.tensor(int(row.ASnode1_info_traffic), dtype=torch.long),
+                    torch.tensor(int(row.ASnode1_info_ratio), dtype=torch.long),
+                    torch.tensor(int(row.ASnode1_info_scope), dtype=torch.long),
+                    torch.tensor(int(row.ASnode1_policy_general), dtype=torch.long),
+                    torch.tensor(int(row.ASnode1_policy_locations), dtype=torch.long),
+                    torch.tensor(int(row.ASnode1_policy_ratio), dtype=torch.long),
+                    torch.tensor(int(row.ASnode1_policy_contracts), dtype=torch.long),
+                    torch.tensor(dealpadding(row.ASnode1_appearIXP, ixp_pad), dtype=torch.long),
+                    torch.tensor(dealpadding(row.ASnode1_appearFac, fac_pad), dtype=torch.long),
+                    torch.tensor(int(row.ASnode2_info_type), dtype=torch.long),
+                    torch.tensor(int(row.ASnode2_AS_tier), dtype=torch.long),       # BUGFIX
+                    torch.tensor(int(row.ASnode2_info_traffic), dtype=torch.long),
+                    torch.tensor(int(row.ASnode2_info_ratio), dtype=torch.long),
+                    torch.tensor(int(row.ASnode2_info_scope), dtype=torch.long),
+                    torch.tensor(int(row.ASnode2_policy_general), dtype=torch.long),
+                    torch.tensor(int(row.ASnode2_policy_locations), dtype=torch.long),
+                    torch.tensor(int(row.ASnode2_policy_ratio), dtype=torch.long),
+                    torch.tensor(int(row.ASnode2_policy_contracts), dtype=torch.long),
+                    torch.tensor(dealpadding(row.ASnode2_appearIXP, ixp_pad), dtype=torch.long),
+                    torch.tensor(dealpadding(row.ASnode2_appearFac, fac_pad), dtype=torch.long),
+                    torch.tensor(float(row.rating), dtype=torch.float32),
+                )
 
-
-            ASnode2_info_type.append(int(row.ASnode2_info_type))
-            ASnode2_AS_tier.append(int(row.ASnode2_info_type))
-            ASnode2_info_traffic.append(int(row.ASnode2_info_traffic))
-            ASnode2_info_ratio.append(int(row.ASnode2_info_ratio))
-            ASnode2_info_scope.append(int(row.ASnode2_info_scope))
-            ASnode2_policy_general.append(int(row.ASnode2_policy_general))
-            ASnode2_policy_locations.append(int(row.ASnode2_policy_locations))
-            ASnode2_policy_ratio.append(int(row.ASnode2_policy_ratio))
-            ASnode2_policy_contracts.append(int(row.ASnode2_policy_contracts))
-            ASnode2_appearIXP.append(
-                dealpadding(row.ASnode2_appearIXP, 879))
-            ASnode2_appearFac.append(
-                dealpadding(row.ASnode2_appearFac, 4111))
-
-        # print(torch.eye(len(ASnode2_info_prefixes4)))
-        return [
-            torch.ShortTensor(test_users),
-            torch.ShortTensor(test_items),
-            torch.ShortTensor(ASnode1_info_type),
-            torch.ShortTensor(ASnode1_AS_tier),
-            torch.ShortTensor(ASnode1_info_traffic),
-            torch.ShortTensor(ASnode1_info_ratio),
-            torch.ShortTensor(ASnode1_info_scope),
-            torch.ShortTensor(ASnode1_policy_general),
-            torch.ShortTensor(ASnode1_policy_locations),
-            torch.ShortTensor(ASnode1_policy_ratio),
-            torch.ShortTensor(ASnode1_policy_contracts),
-            torch.ShortTensor(ASnode1_appearIXP),
-            torch.ShortTensor(ASnode1_appearFac),
-            torch.ShortTensor(ASnode2_info_type),
-            torch.ShortTensor(ASnode2_AS_tier),
-            torch.ShortTensor(ASnode2_info_traffic),
-            torch.ShortTensor(ASnode2_info_ratio),
-            torch.ShortTensor(ASnode2_info_scope),
-            torch.ShortTensor(ASnode2_policy_general),
-            torch.ShortTensor(ASnode2_policy_locations),
-            torch.ShortTensor(ASnode2_policy_ratio),
-            torch.ShortTensor(ASnode2_policy_contracts),
-            torch.ShortTensor(ASnode2_appearIXP),
-            torch.ShortTensor(ASnode2_appearFac),
-            torch.FloatTensor(test_ratings)
-        ]
+        dataset = ValDataset(self.valid_ratings)
+        return DataLoader(dataset, batch_size=2048, shuffle=False,
+                          pin_memory=True, num_workers=0)

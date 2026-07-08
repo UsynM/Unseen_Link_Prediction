@@ -1,7 +1,7 @@
 # -*- coding: UTF-8 -*-
 import torch
 from engine import Engine
-from utils import use_cuda
+from utils import use_cuda, resume_checkpoint
 
 
 class GMF(torch.nn.Module):
@@ -70,10 +70,10 @@ class GMF(torch.nn.Module):
             num_embeddings=self.num_ASnode1_policy_contracts,
             embedding_dim=self.num_ASnode1_policy_contracts)
         self.ASnode1_appearIXP = torch.nn.Embedding(
-            num_embeddings=self.num_ASnode1_appearIXP, embedding_dim=15)
+            num_embeddings=self.num_ASnode1_appearIXP, embedding_dim=15, padding_idx=0)
 
         self.ASnode1_appearFac = torch.nn.Embedding(
-            num_embeddings=self.num_ASnode1_appearFac, embedding_dim=20)
+            num_embeddings=self.num_ASnode1_appearFac, embedding_dim=20, padding_idx=0)
 
 
         self.embedding_item = torch.nn.Embedding(num_embeddings=self.num_items,
@@ -106,9 +106,9 @@ class GMF(torch.nn.Module):
             num_embeddings=self.num_ASnode2_policy_contracts,
             embedding_dim=self.num_ASnode2_policy_contracts)
         self.ASnode2_appearIXP = torch.nn.Embedding(
-            num_embeddings=self.num_ASnode2_appearIXP, embedding_dim=15)
+            num_embeddings=self.num_ASnode2_appearIXP, embedding_dim=15, padding_idx=0)
         self.ASnode2_appearFac = torch.nn.Embedding(
-            num_embeddings=self.num_ASnode2_appearFac, embedding_dim=20)
+            num_embeddings=self.num_ASnode2_appearFac, embedding_dim=20, padding_idx=0)
 
 
 
@@ -134,6 +134,15 @@ class GMF(torch.nn.Module):
                 ASnode2_policy_contracts,ASnode2_appearIXP,
                 ASnode2_appearFac):
 
+        # 辅助函数：对 padded 序列做 masked mean，忽略 padding_idx=0 的位置
+        def masked_mean(emb_layer, indices):
+            """对 Embedding 输出沿 dim=1 做 mask mean，忽略 padding (index==0)"""
+            emb = emb_layer(indices)  # [B, seq_len, emb_dim]
+            mask = (indices != 0).float().unsqueeze(-1)  # [B, seq_len, 1]
+            emb = emb * mask
+            denom = mask.sum(dim=1).clamp(min=1)  # [B, 1], 至少为1防止除0
+            return emb.sum(dim=1) / denom  # [B, emb_dim]
+
         user_embedding = torch.cat(
             (self.embedding_user(user_indices),
              self.ASnode1_info_type(ASnode1_info_type),
@@ -145,8 +154,8 @@ class GMF(torch.nn.Module):
              self.ASnode1_policy_locations(ASnode1_policy_locations),
              self.ASnode1_policy_ratio(ASnode1_policy_ratio),
              self.ASnode1_policy_contracts(ASnode1_policy_contracts),
-             torch.mean(self.ASnode1_appearIXP(ASnode1_appearIXP), dim=1),
-             torch.mean(self.ASnode1_appearFac(ASnode1_appearFac), dim=1)), 1)
+             masked_mean(self.ASnode1_appearIXP, ASnode1_appearIXP),
+             masked_mean(self.ASnode1_appearFac, ASnode1_appearFac)), 1)
 
         item_embedding = torch.cat(
             (self.embedding_item(item_indices),
@@ -159,8 +168,8 @@ class GMF(torch.nn.Module):
              self.ASnode2_policy_locations(ASnode2_policy_locations),
              self.ASnode2_policy_ratio(ASnode2_policy_ratio),
              self.ASnode2_policy_contracts(ASnode2_policy_contracts),
-             torch.mean(self.ASnode2_appearIXP(ASnode2_appearIXP), dim=1),
-             torch.mean(self.ASnode2_appearFac(ASnode2_appearFac), dim=1)), 1)
+             masked_mean(self.ASnode2_appearIXP, ASnode2_appearIXP),
+             masked_mean(self.ASnode2_appearFac, ASnode2_appearFac)), 1)
 
 
         element_product = torch.mul(user_embedding, item_embedding)
@@ -170,6 +179,10 @@ class GMF(torch.nn.Module):
 
     def init_weight(self):
         pass
+
+    def load_pretrained_model(self, model_path, device_id):
+        """加载完整的GMF预训练模型参数"""
+        resume_checkpoint(self, model_path, device_id)
 
 
 class GMFEngine(Engine):
