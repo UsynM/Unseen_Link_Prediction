@@ -1,8 +1,9 @@
 # -*- coding: UTF-8 -*-
 import torch
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, roc_auc_score, roc_curve, precision_score
 from torch.autograd import Variable
 from tensorboardX import SummaryWriter
+from tqdm import tqdm
 
 from utils import save_checkpoint, use_optimizer
 from metrics import MetronAtK
@@ -112,7 +113,7 @@ class Engine(object):
         test_scores_all = []
 
         with torch.no_grad():
-            for batch in evaluate_data:
+            for batch in tqdm(evaluate_data, desc='Evaluating'):
                 test_users, test_items, ASnode1_info_type, ASnode1_AS_tier, ASnode1_info_traffic, \
                 ASnode1_info_ratio, ASnode1_info_scope, ASnode1_policy_general, \
                 ASnode1_policy_locations, ASnode1_policy_ratio, ASnode1_policy_contracts, \
@@ -172,12 +173,112 @@ class Engine(object):
         test_ratings_all = np.array(test_ratings_all)
         test_scores_all = np.array(test_scores_all)
 
+        # ===== RMSE =====
         rmse = np.sqrt(
             mean_squared_error(y_pred=test_scores_all,
                                y_true=test_ratings_all))
         self._writer.add_scalar('performance/RMSE', rmse, epoch_id)
-        print('[Evaluating Epoch {}] RMSE = {:.4f}'.format(epoch_id, rmse))
+
+        # ===== Hop-count Binary Classification Metrics (hop=1 as direct link) =====
+        metrics = self.evaluate_hop_binary(test_ratings_all, test_scores_all,
+                                          threshold=0.5, verbose=True)
+
+        # ===== Log all metrics =====
+        metrics['rmse'] = rmse
+        with open('metric.res', 'a') as f:
+            f.write(f'Epoch {epoch_id} Evaluation Metrics:\n')
+            for key, value in metrics.items():
+                f.write(f'  {key}: {value}\n')
+            f.write('-' * 50 + '\n')
+
         return rmse
+
+    # ========== 核心映射函数：score → hop → 直连概率 ==========
+    @staticmethod
+    def map_score_to_link_prob(score_np):
+        """
+        输入：模型输出的score数组（numpy）
+        输出：(hop_pred, link_prob)
+          - hop_pred: 预测hop数（连续值）
+          - link_prob: 存在直连的概率（概率 = 1/hop，hop越小越接近1）
+        """
+        score_np = score_np.astype(float).copy()
+
+        # 找到最小正数，将 ≤0 的值替换为最小正数
+        min_positive = np.min(score_np[score_np > 0]) if np.any(score_np > 0) else 1.0
+        score_np = np.where(score_np <= 0, min_positive, score_np)
+
+        # 直连概率 = min_positive / score
+        link_prob = np.clip(min_positive / score_np, 0.0, 1.0)
+        return score_np, link_prob
+
+    # ========== Hop-count 二分评估 (hop=1 视为直连边) ==========
+    @staticmethod
+    def evaluate_hop_binary(test_ratings, test_scores, threshold=0.5, verbose=True):
+        """
+        评估 hop-count 预测中的"直连判断"效果
+          - test_ratings: 真实 hop 值 (numpy array)
+          - test_scores:  模型预测分数 (numpy array)
+          - threshold:    概率阈值，默认0.5
+          - verbose:      是否打印结果
+        Returns: dict of metrics
+        """
+        test_ratings_np = np.array(test_ratings).flatten()
+        test_scores_np = np.array(test_scores).flatten()
+
+        # 二值化：hop=1 → 直连(1)，其余 → 非直连(0)
+        test_ratings_binary = np.where(test_ratings_np == 1, 1, 0)
+        _, link_prob = Engine.map_score_to_link_prob(test_scores_np)
+
+        pos_count = int(np.sum(test_ratings_binary))
+        neg_count = int(len(test_ratings_binary) - pos_count)
+
+        metrics = {
+            "auc": 0.0,
+            "tpr_at_fpr_01": 0.0,
+            "precision": 0.0,
+            "positive_count": pos_count,
+            "negative_count": neg_count,
+            "unique_hop_values": list(np.unique(test_ratings_np)),
+            "threshold": threshold,
+        }
+
+        # 只有一类标签时跳过
+        if len(np.unique(test_ratings_binary)) < 2:
+            if verbose:
+                print("⚠️  Warning: Only one class in binary labels, skipping classification metrics.")
+                print(f"  Hop values: {metrics['unique_hop_values']}, "
+                      f"Positive: {pos_count}, Negative: {neg_count}")
+            return metrics
+
+        # AUC
+        metrics["auc"] = roc_auc_score(test_ratings_binary, link_prob)
+
+        # TPR @ FPR=0.1
+        fpr, tpr, _ = roc_curve(test_ratings_binary, link_prob)
+        valid_idx = np.where(fpr <= 0.1)[0]
+        if len(valid_idx) > 0:
+            metrics["tpr_at_fpr_01"] = float(tpr[valid_idx[-1]])
+            fp_cnt = int(fpr[valid_idx[-1]] * len(test_ratings_binary))
+            tp_cnt = int(metrics["tpr_at_fpr_01"] * pos_count)
+            print(f"  At FPR={fpr[valid_idx[-1]]:.4f}, FP Count={fp_cnt}, TP Count={tp_cnt}")
+
+        # Precision
+        test_pred_labels = (link_prob >= threshold).astype(int)
+        metrics["precision"] = precision_score(test_ratings_binary, test_pred_labels, zero_division=0)
+
+        if verbose:
+            print("\n" + "=" * 55)
+            print("  Hop-count Binary Classification (hop=1 = direct link)")
+            print("=" * 55)
+            print(f"  Unique hop values : {metrics['unique_hop_values']}")
+            print(f"  Data distribution : direct={pos_count}, indirect={neg_count}")
+            print(f"  AUC               : {metrics['auc']:.4f}")
+            print(f"  TPR @ FPR=0.1      : {metrics['tpr_at_fpr_01']:.4f}")
+            print(f"  Precision (thr={threshold}): {metrics['precision']:.4f}")
+            print("=" * 55 + "\n")
+
+        return metrics
 
     def save(self, alias, epoch_id, rmse):
         assert hasattr(self, 'model'), 'Please specify the exact model !'

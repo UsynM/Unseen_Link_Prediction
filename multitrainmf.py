@@ -21,12 +21,13 @@ def train(sample_generator, gmf_config):
     engine = GMFEngine(config)
 
     for epoch in range(config['num_epoch']):
-        print('Epoch {} starts !'.format(epoch))
+        print('\nEpoch {} starts !'.format(epoch))
         print('-' * 80)
         train_loader = sample_generator.instance_a_train_loader(config['batch_size'])
         engine.train_an_epoch(train_loader, epoch_id=epoch)
         evaluate_data = sample_generator.evaluate_data  # 每次取 DataLoader（轻量）
         rmse = engine.evaluate(evaluate_data, epoch_id=epoch)
+        print('[Epoch {}] RMSE = {:.4f}'.format(epoch, rmse))
         engine.save(config['alias'], epoch, rmse)
 
 
