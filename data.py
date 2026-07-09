@@ -82,12 +82,14 @@ class UserItemRatingDataset(Dataset):
 
 class SampleGenerator(object):
     """Construct dataset for NCF"""
-    def __init__(self, train_ratings, valid_ratings, 
-                 ixp_pad_len=879, fac_pad_len=4111):
+    def __init__(self, train_ratings, valid_ratings,
+                 ixp_pad_len=1125, fac_pad_len=4380, seed=None):
         self.train_ratings = train_ratings
         self.valid_ratings = valid_ratings
         self.ixp_pad_len = ixp_pad_len
         self.fac_pad_len = fac_pad_len
+        self.seed = seed
+        self._train_loader_calls = 0
 
     # ========== 懒加载 Train DataLoader（仅持有DataFrame引用，延迟到getitem才处理） ==========
     def instance_a_train_loader(self, batch_size):
@@ -135,8 +137,14 @@ class SampleGenerator(object):
                 )
 
         dataset = TrainDataset(self.train_ratings)
+        generator = None
+        if self.seed is not None:
+            generator = torch.Generator()
+            generator.manual_seed(int(self.seed) + self._train_loader_calls)
+            self._train_loader_calls += 1
         return DataLoader(dataset, batch_size=batch_size, shuffle=True,
-                          pin_memory=True, num_workers=0)
+                          pin_memory=False, num_workers=0,
+                          generator=generator)
 
     # ========== 批量 Validation DataLoader（替代原来一次性返回大tensor的 evaluate_data） ==========
     @property
@@ -184,4 +192,4 @@ class SampleGenerator(object):
 
         dataset = ValDataset(self.valid_ratings)
         return DataLoader(dataset, batch_size=2048, shuffle=False,
-                          pin_memory=True, num_workers=0)
+                          pin_memory=False, num_workers=0)

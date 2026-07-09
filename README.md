@@ -72,7 +72,7 @@ ASnode2_policy_ratio,ASnode2_policy_contracts,ASnode2_appearIXP,ASnode2_appearFa
 Unseen_Link_Prediction/
 ├── data.py              # Data loading: lazy DataLoader, padding, SampleGenerator
 ├── engine.py            # Training/evaluation engine (batch-wise validation)
-├── gmf.py               # GMF model with side-information embeddings & masked mean
+├── gmf.py               # GMF model with side-information embeddings
 ├── mlp.py               # MLP model (baseline)
 ├── neumf.py             # NeuMF model (GMF + MLP fusion)
 ├── metrics.py           # Evaluation metrics (Hit Ratio, NDCG)
@@ -87,6 +87,6 @@ Compared to the original implementation, this version includes:
 
 1. **Lazy DataLoader** — Side information is processed on-the-fly in `__getitem__` rather than pre-expanded per sample, reducing memory from O(|E|·F) to O(F).
 2. **Batch-wise validation** — Validation data is evaluated in batches instead of loading the entire set onto GPU at once, preventing OOM.
-3. **Masked mean for padded sequences** — `appearIXP` and `appearFac` embeddings use `padding_idx=0` with a masked average, ignoring padding positions.
+3. **Original SGMF side-feature semantics preserved** — `appearIXP` and `appearFac` embeddings are averaged over the fixed padded length, matching the open-source model and keeping feature scales stable.
 4. **Field bug fixes** — `AS_tier` was incorrectly assigned from `info_type`; now reads from the correct column.
 5. **Configurable via argparse** — All hyperparameters and paths are exposed as CLI arguments instead of being hardcoded.

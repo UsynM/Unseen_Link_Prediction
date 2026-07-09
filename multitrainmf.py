@@ -7,12 +7,24 @@ SGMF Training Entry Point (CUDA version)
 import os
 import sys
 import argparse
+import random
 import pandas as pd
 import numpy as np
+import torch
 from gmf import GMFEngine
 from mlp import MLPEngine
 from neumf import NeuMFEngine
 from data import SampleGenerator
+
+
+def set_random_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def train(sample_generator, gmf_config):
@@ -48,6 +60,7 @@ def main():
     parser.add_argument('--num_users', type=int, default=77438, help='Number of users (max ASN)')
     parser.add_argument('--ixp_pad', type=int, default=1125, help='appearIXP padding length')
     parser.add_argument('--fac_pad', type=int, default=4380, help='appearFac padding length')
+    parser.add_argument('--seed', type=int, default=0, help='Random seed for model init and data shuffling')
 
     # Feature cardinalities (根据数据统计设置)
     parser.add_argument('--num_info_type', type=int, default=11)
@@ -61,6 +74,7 @@ def main():
     parser.add_argument('--num_policy_contracts', type=int, default=4)
 
     args = parser.parse_args()
+    set_random_seed(args.seed)
 
     # 数据路径
     train_path = os.path.join(args.data_dir, args.train_file)
@@ -118,7 +132,8 @@ def main():
         train_ratings=AShop_train_rating,
         valid_ratings=AShop_valid_rating,
         ixp_pad_len=args.ixp_pad,
-        fac_pad_len=args.fac_pad)
+        fac_pad_len=args.fac_pad,
+        seed=args.seed)
 
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     if use_cuda:
@@ -163,6 +178,7 @@ def main():
         'l2_regularization': 0,
         'use_cuda': use_cuda,
         'device_id': args.device_id,
+        'seed': args.seed,
         'model_dir': 'checkpoints/' + alias + '/{}_Epoch{}_RMSE{:.4f}.model'
     }
 
@@ -173,5 +189,4 @@ def main():
 
 
 if __name__ == '__main__':
-    import torch
     main()

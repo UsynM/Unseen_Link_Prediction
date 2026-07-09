@@ -259,7 +259,7 @@ class Engine(object):
         valid_idx = np.where(fpr <= 0.1)[0]
         if len(valid_idx) > 0:
             metrics["tpr_at_fpr_01"] = float(tpr[valid_idx[-1]])
-            fp_cnt = int(fpr[valid_idx[-1]] * len(test_ratings_binary))
+            fp_cnt = int(fpr[valid_idx[-1]] * neg_count)
             tp_cnt = int(metrics["tpr_at_fpr_01"] * pos_count)
             print(f"  At FPR={fpr[valid_idx[-1]]:.4f}, FP Count={fp_cnt}, TP Count={tp_cnt}")
 
