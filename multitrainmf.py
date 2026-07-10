@@ -27,6 +27,30 @@ def set_random_seed(seed):
     torch.backends.cudnn.benchmark = False
 
 
+RATING_COLUMNS = ['userId', 'itemId', 'rating',
+                  'ASnode1_info_type', 'ASnode1_AS_tier', 'ASnode1_info_traffic',
+                  'ASnode1_info_ratio', 'ASnode1_info_scope', 'ASnode1_policy_general',
+                  'ASnode1_policy_locations', 'ASnode1_policy_ratio',
+                  'ASnode1_policy_contracts', 'ASnode1_appearIXP', 'ASnode1_appearFac',
+                  'ASnode2_info_type', 'ASnode2_AS_tier', 'ASnode2_info_traffic',
+                  'ASnode2_info_ratio', 'ASnode2_info_scope', 'ASnode2_policy_general',
+                  'ASnode2_policy_locations', 'ASnode2_policy_ratio',
+                  'ASnode2_policy_contracts', 'ASnode2_appearIXP', 'ASnode2_appearFac']
+
+
+def read_legacy_ratings(path):
+    return pd.read_csv(
+        path,
+        sep=r',(?=(?:[^"]*"[^"]*")*[^"]*$)',
+        header=None,
+        names=RATING_COLUMNS,
+        engine='python')
+
+
+def read_compact_hops(path):
+    return pd.read_csv(path, header=0, usecols=['userId', 'itemId', 'rating'])
+
+
 def train(sample_generator, gmf_config):
     print('=== Training started ===')
     config = gmf_config
@@ -51,6 +75,10 @@ def main():
                         help='Training file name')
     parser.add_argument('--valid_file', type=str, default='validate_hop_matrix_sample_1000.csv',
                         help='Validation file name')
+    parser.add_argument('--feature_file', type=str, default=None,
+                        help='AS feature CSV for compact hop matrix files')
+    parser.add_argument('--evaluate_batch_size', type=int, default=2048,
+                        help='Validation batch size')
     parser.add_argument('--epochs', type=int, default=20, help='Number of epochs')
     parser.add_argument('--batch_size', type=int, default=512, help='Batch size')
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
@@ -89,41 +117,26 @@ def main():
         print("Please check --data_dir and --valid_file arguments.")
         sys.exit(1)
 
+    feature_frame = None
+    if args.feature_file:
+        feature_path = args.feature_file
+        if not os.path.isabs(feature_path):
+            feature_path = os.path.join(args.data_dir, args.feature_file)
+        if not os.path.exists(feature_path):
+            print(f"ERROR: AS feature file not found: {feature_path}")
+            sys.exit(1)
+        print(f"Loading AS features: {feature_path}")
+        feature_frame = pd.read_csv(feature_path)
+
     print(f"Loading training data: {train_path}")
     # 使用逗号分隔，兼容含引号的字段
-    AShop_train_rating = pd.read_csv(
-        train_path,
-        sep=r',(?=(?:[^"]*"[^"]*")*[^"]*$)',
-        header=None,
-        names=['userId', 'itemId', 'rating',
-               'ASnode1_info_type', 'ASnode1_AS_tier', 'ASnode1_info_traffic',
-               'ASnode1_info_ratio', 'ASnode1_info_scope', 'ASnode1_policy_general',
-               'ASnode1_policy_locations', 'ASnode1_policy_ratio',
-               'ASnode1_policy_contracts', 'ASnode1_appearIXP', 'ASnode1_appearFac',
-               'ASnode2_info_type', 'ASnode2_AS_tier', 'ASnode2_info_traffic',
-               'ASnode2_info_ratio', 'ASnode2_info_scope', 'ASnode2_policy_general',
-               'ASnode2_policy_locations', 'ASnode2_policy_ratio',
-               'ASnode2_policy_contracts', 'ASnode2_appearIXP', 'ASnode2_appearFac'],
-        engine='python')
+    AShop_train_rating = read_compact_hops(train_path) if args.feature_file else read_legacy_ratings(train_path)
     AShop_train_rating.sort_values(by=["userId", "itemId"], inplace=True)
     AShop_train_rating.reset_index(drop=True, inplace=True)
     print(f"Train data shape: {AShop_train_rating.shape}")
 
     print(f"Loading validation data: {valid_path}")
-    AShop_valid_rating = pd.read_csv(
-        valid_path,
-        sep=r',(?=(?:[^"]*"[^"]*")*[^"]*$)',
-        header=None,
-        names=['userId', 'itemId', 'rating',
-               'ASnode1_info_type', 'ASnode1_AS_tier', 'ASnode1_info_traffic',
-               'ASnode1_info_ratio', 'ASnode1_info_scope', 'ASnode1_policy_general',
-               'ASnode1_policy_locations', 'ASnode1_policy_ratio',
-               'ASnode1_policy_contracts', 'ASnode1_appearIXP', 'ASnode1_appearFac',
-               'ASnode2_info_type', 'ASnode2_AS_tier', 'ASnode2_info_traffic',
-               'ASnode2_info_ratio', 'ASnode2_info_scope', 'ASnode2_policy_general',
-               'ASnode2_policy_locations', 'ASnode2_policy_ratio',
-               'ASnode2_policy_contracts', 'ASnode2_appearIXP', 'ASnode2_appearFac'],
-        engine='python')
+    AShop_valid_rating = read_compact_hops(valid_path) if args.feature_file else read_legacy_ratings(valid_path)
     AShop_valid_rating.sort_values(by=["userId", "itemId"], inplace=True)
     AShop_valid_rating.reset_index(drop=True, inplace=True)
     print(f"Valid data shape: {AShop_valid_rating.shape}")
@@ -133,7 +146,9 @@ def main():
         valid_ratings=AShop_valid_rating,
         ixp_pad_len=args.ixp_pad,
         fac_pad_len=args.fac_pad,
-        seed=args.seed)
+        seed=args.seed,
+        as_features=feature_frame,
+        evaluate_batch_size=args.evaluate_batch_size)
 
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     if use_cuda:
@@ -148,6 +163,7 @@ def main():
         'alias': alias,
         'num_epoch': args.epochs,
         'batch_size': args.batch_size,
+        'evaluate_batch_size': args.evaluate_batch_size,
         'optimizer': 'adam',
         'adam_lr': args.lr,
         'num_users': args.num_users,
@@ -179,6 +195,10 @@ def main():
         'use_cuda': use_cuda,
         'device_id': args.device_id,
         'seed': args.seed,
+        'data_dir': args.data_dir,
+        'train_file': args.train_file,
+        'valid_file': args.valid_file,
+        'feature_file': args.feature_file,
         'model_dir': 'checkpoints/' + alias + '/{}_Epoch{}_RMSE{:.4f}.model'
     }
 

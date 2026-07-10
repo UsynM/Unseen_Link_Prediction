@@ -1,4 +1,6 @@
 # -*- coding: UTF-8 -*-
+from datetime import datetime
+
 import torch
 from sklearn.metrics import mean_squared_error, roc_auc_score, roc_curve, precision_score
 from torch.autograd import Variable
@@ -23,6 +25,22 @@ class Engine(object):
         self.opt = use_optimizer(self.model, config)
         # loss function
         self.crit = torch.nn.MSELoss()
+        self._write_metric_header()
+
+    def _write_metric_header(self):
+        keys = [
+            'alias', 'data_dir', 'train_file', 'valid_file', 'feature_file',
+            'num_epoch', 'batch_size', 'evaluate_batch_size', 'optimizer',
+            'adam_lr', 'latent_dim', 'use_cuda', 'device_id', 'seed'
+        ]
+        with open('metric.res', 'a') as f:
+            f.write('\n' + '=' * 60 + '\n')
+            f.write('Run started: {}\n'.format(datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+            f.write('Training configuration:\n')
+            for key in keys:
+                if key in self.config:
+                    f.write('  {}: {}\n'.format(key, self.config[key]))
+            f.write('-' * 60 + '\n')
 
     def train_single_batch(
             self, users, items, ASnode1_info_type, ASnode1_AS_tier,
